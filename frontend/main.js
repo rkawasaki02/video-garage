@@ -318,6 +318,9 @@ function render() {
 		const player = card.querySelector(`#player-${uid}`);
 		const img = card.querySelector('img');
 
+		// 固定再生中かどうか
+		let pinned = false;
+
 		function showPlayer(muted) {
 			if (type === 'mp4') {
 				player.muted = muted;
@@ -326,18 +329,20 @@ function render() {
 				player.play().catch(() => { });
 				if (img) img.style.opacity = '0';
 			} else {
-				const embedSrc = getEmbedUrl({ type, id }, muted);
-				if (embedSrc) {
-					player.src = embedSrc;
-					player.style.opacity = '1';
-					player.style.pointerEvents = 'auto';
-					if (img) img.style.opacity = '0';
+				// すでにsrcがセットされていれば再セットしない（固定再生中のミュート解除を守る）
+				if (!player.src) {
+					const embedSrc = getEmbedUrl({ type, id }, muted);
+					if (embedSrc) player.src = embedSrc;
 				}
+				player.style.opacity = '1';
+				player.style.pointerEvents = 'auto';
+				if (img) img.style.opacity = '0';
 			}
 			card.querySelector('.play-btn').style.opacity = '0';
 		}
 
 		function hidePlayer() {
+			if (pinned) return; // 固定再生中は止めない
 			if (type === 'mp4') {
 				player.pause();
 				player.style.opacity = '0';
@@ -351,23 +356,68 @@ function render() {
 			card.querySelector('.play-btn').style.opacity = '1';
 		}
 
-		card.addEventListener('mouseenter', () => showPlayer(true));
-		card.addEventListener('mouseleave', () => hidePlayer());
+		function pinPlayer() {
+			pinned = true;
+			card.classList.add('pinned');
+			// 音ありで再セット（iframeの場合srcを音ありURLで更新）
+			if (type === 'mp4') {
+				player.muted = false;
+			} else {
+				const embedSrc = getEmbedUrl({ type, id }, false);
+				if (embedSrc) player.src = embedSrc;
+			}
+			player.style.opacity = '1';
+			player.style.pointerEvents = 'auto';
+			if (img) img.style.opacity = '0';
+			card.querySelector('.play-btn').style.opacity = '0';
+		}
+
+		function unpinPlayer() {
+			pinned = false;
+			card.classList.remove('pinned');
+			if (type === 'mp4') {
+				player.pause();
+				player.style.opacity = '0';
+				player.style.pointerEvents = 'none';
+			} else {
+				player.src = '';
+				player.style.opacity = '0';
+				player.style.pointerEvents = 'none';
+			}
+			if (img) img.style.opacity = '1';
+			card.querySelector('.play-btn').style.opacity = '1';
+		}
+
+		// PC: ホバーでプレビュー、クリックで固定
+		card.addEventListener('mouseenter', () => {
+			if (!pinned) showPlayer(true);
+		});
+		card.addEventListener('mouseleave', () => {
+			if (!pinned) hidePlayer();
+		});
 		card.addEventListener('click', () => {
-			if (window.innerWidth <= 640) {
-				const already = card.classList.contains('active-mobile');
-				document.querySelectorAll('.card.active-mobile').forEach(c => {
-					c.classList.remove('active-mobile');
-					const p = c.querySelector('[id^="player-"]');
-					if (p.tagName === 'VIDEO') { p.pause(); p.style.opacity = '0'; p.style.pointerEvents = 'none'; }
-					else { p.src = ''; p.style.opacity = '0'; p.style.pointerEvents = 'none'; }
-					const i = c.querySelector('img');
-					if (i) i.style.opacity = '1';
-					c.querySelector('.play-btn').style.opacity = '1';
-				});
-				if (!already) { showPlayer(false); card.classList.add('active-mobile'); }
+			if (window.innerWidth > 640) {
+				if (pinned) {
+					unpinPlayer();
+				} else {
+					pinPlayer();
+				}
+			} else {
+				// スマホ: タップで固定再生トグル
+				if (pinned) {
+					unpinPlayer();
+				} else {
+					// 他の固定再生を解除
+					document.querySelectorAll('.card.pinned').forEach(c => {
+						c._unpinPlayer && c._unpinPlayer();
+					});
+					pinPlayer();
+				}
 			}
 		});
+
+		// unpinPlayer参照をcard要素に持たせる（他カードから呼べるように）
+		card._unpinPlayer = unpinPlayer;
 	});
 
 	setupDragAndDrop();

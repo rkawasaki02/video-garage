@@ -591,3 +591,9 @@ body {
     display: none;
   }
 }
+
+/* ── Pinned card ── */
+.card.pinned {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green), 0 8px 32px rgba(158,206,106,0.15);
+}
