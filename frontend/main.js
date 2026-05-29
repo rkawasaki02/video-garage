@@ -1,5 +1,4 @@
 // ── Platform detection & helpers ──
-
 const ALLOWED_DOMAINS = [
 	'youtube.com', 'youtu.be',
 	'vimeo.com',
@@ -9,29 +8,18 @@ const ALLOWED_DOMAINS = [
 
 function detectPlatform(url) {
 	url = url.trim().replace(/^["']|["']$/g, '');
-
-	// YouTube
 	const yt = url.match(/(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
 	if (yt) return { type: 'youtube', id: yt[1], url };
 	if (/^[A-Za-z0-9_-]{11}$/.test(url)) return { type: 'youtube', id: url, url };
-
-	// Vimeo
 	const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
 	if (vimeo) return { type: 'vimeo', id: vimeo[1], url };
-
-	// Twitch clip
 	const twitchClip = url.match(/twitch\.tv\/\w+\/clip\/([A-Za-z0-9_-]+)/);
 	if (twitchClip) return { type: 'twitch_clip', id: twitchClip[1], url };
-
-	// Twitch channel
 	const twitch = url.match(/twitch\.tv\/([A-Za-z0-9_]+)/);
 	if (twitch) return { type: 'twitch', id: twitch[1], url };
-
-	// mp4直リンク / X動画
 	if (/\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(url) || url.includes('video.twimg.com')) {
 		return { type: 'mp4', id: url, url };
 	}
-
 	return null;
 }
 
@@ -65,36 +53,143 @@ function getPlatformLabel(type) {
 
 function getPlatformColor(type) {
 	const map = {
-		youtube: 'var(--red)',
-		vimeo: 'var(--blue)',
-		twitch: 'var(--purple)',
-		twitch_clip: 'var(--purple)',
-		mp4: 'var(--green)'
+		youtube: 'var(--red)', vimeo: 'var(--blue)',
+		twitch: 'var(--purple)', twitch_clip: 'var(--purple)', mp4: 'var(--green)'
 	};
 	return map[type] || 'var(--muted)';
 }
 
+// ── Cognito設定 ──
+const COGNITO_CONFIG = {
+	userPoolId: 'ap-northeast-1_HPXDrKY5a',
+	clientId: '1ld5act6auc0ongafp3kob4p6r',
+	domain: 'https://ap-northeast-1hpxdrky5a.auth.ap-northeast-1.amazoncognito.com',
+	redirectUri: 'https://videogarage.jp',
+	apiBaseUrl: 'https://6wo64xbz28.execute-api.ap-northeast-1.amazonaws.com'
+};
 
-// ── Storage ──
+// ── 認証状態 ──
+let idToken = null;
+let isLoggedIn = false;
+
+// トークンをlocalStorageに保存・取得
+function saveToken(token) { localStorage.setItem('vg_id_token', token); }
+function loadToken() { return localStorage.getItem('vg_id_token'); }
+function clearToken() { localStorage.removeItem('vg_id_token'); }
+
+// JWTの有効期限チェック
+function isTokenExpired(token) {
+	try {
+		const payload = JSON.parse(atob(token.split('.')[1]));
+		return Date.now() / 1000 > payload.exp;
+	} catch {
+		return true;
+	}
+}
+
+// サインイン・サインアウトの処理
+function handleAuth() {
+	if (isLoggedIn) {
+		// サインアウト
+		clearToken();
+		isLoggedIn = false;
+		idToken = null;
+		updateAuthUI();
+		// ゲストモードに戻る
+		videos = loadLocal();
+		tabs = loadTabsLocal();
+		activeTabId = loadActiveTab();
+		renderTabs();
+		render();
+		showToast('-- signed out');
+	} else {
+		// Cognitoのサインイン画面にリダイレクト
+		const url = `${COGNITO_CONFIG.domain}/login?client_id=${COGNITO_CONFIG.clientId}&response_type=code&scope=openid+email&redirect_uri=${encodeURIComponent(COGNITO_CONFIG.redirectUri)}`;
+		window.location.href = url;
+	}
+}
+
+// サインイン後のコールバック処理（URLのcodeをトークンに交換）
+async function handleCallback() {
+	const params = new URLSearchParams(window.location.search);
+	const code = params.get('code');
+	if (!code) return false;
+
+	try {
+		const res = await fetch(`${COGNITO_CONFIG.domain}/oauth2/token`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({
+				grant_type: 'authorization_code',
+				client_id: COGNITO_CONFIG.clientId,
+				code,
+				redirect_uri: COGNITO_CONFIG.redirectUri
+			})
+		});
+		const data = await res.json();
+		if (data.id_token) {
+			saveToken(data.id_token);
+			// URLからcodeを消す
+			window.history.replaceState({}, '', window.location.pathname);
+			return true;
+		}
+	} catch (e) {
+		console.error('Token exchange failed:', e);
+	}
+	return false;
+}
+
+function updateAuthUI() {
+	const statusEl = document.getElementById('authStatus');
+	const btnEl = document.getElementById('authBtn');
+	if (isLoggedIn) {
+		statusEl.textContent = '-- signed in';
+		statusEl.style.color = 'var(--green)';
+		btnEl.textContent = 'sign out';
+	} else {
+		statusEl.textContent = '-- guest mode';
+		statusEl.style.color = 'var(--muted)';
+		btnEl.textContent = 'sign in';
+	}
+}
+
+// ── API呼び出し ──
+async function apiFetch(path, options = {}) {
+	const res = await fetch(`${COGNITO_CONFIG.apiBaseUrl}${path}`, {
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': idToken,
+			...(options.headers || {})
+		}
+	});
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	return res.json();
+}
+
+// ── Storage（ゲストモード用localStorage）──
 const KEY = 'nvim_vg_v1';
 const TABS_KEY = 'nvim_vg_tabs_v1';
 const ACTIVE_TAB_KEY = 'nvim_vg_active_tab';
 
-function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
-function save(v) { localStorage.setItem(KEY, JSON.stringify(v)); }
-function loadTabs() { try { return JSON.parse(localStorage.getItem(TABS_KEY)) || []; } catch { return []; } }
-function saveTabs(t) { localStorage.setItem(TABS_KEY, JSON.stringify(t)); }
+function loadLocal() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
+function saveLocal(v) { localStorage.setItem(KEY, JSON.stringify(v)); }
+function loadTabsLocal() { try { return JSON.parse(localStorage.getItem(TABS_KEY)) || []; } catch { return []; } }
+function saveTabsLocal(t) { localStorage.setItem(TABS_KEY, JSON.stringify(t)); }
 function loadActiveTab() { return localStorage.getItem(ACTIVE_TAB_KEY) || null; }
 function saveActiveTab(id) { localStorage.setItem(ACTIVE_TAB_KEY, id); }
 
-let videos = load();
-let tabs = loadTabs();
+let videos = loadLocal();
+let tabs = loadTabsLocal();
 let activeTabId = loadActiveTab();
 
+function genId() { return Math.random().toString(36).slice(2, 10); }
+
+// タブが1つもなければデフォルト作成
 if (tabs.length === 0) {
 	const defaultTab = { id: genId(), name: 'playlist' };
 	tabs.push(defaultTab);
-	saveTabs(tabs);
+	saveTabsLocal(tabs);
 	activeTabId = defaultTab.id;
 	saveActiveTab(activeTabId);
 }
@@ -104,15 +199,10 @@ if (!tabs.find(t => t.id === activeTabId)) {
 	saveActiveTab(activeTabId);
 }
 
-function genId() { return Math.random().toString(36).slice(2, 10); }
-
-
-
 // ── Video actions ──
-function addVideo() {
+async function addVideo() {
 	const urlEl = document.getElementById('urlInput');
 	const url = urlEl.value.trim();
-	const title = '';
 	if (!url) { showToast('E: url required', true); return; }
 
 	const platform = detectPlatform(url);
@@ -121,16 +211,39 @@ function addVideo() {
 	const uid = platform.type + '_' + platform.id;
 	if (videos.find(v => v.uid === uid && v.tabId === activeTabId)) { showToast('W: already exists', true); return; }
 
-	videos.unshift({
+	const videoData = {
 		uid,
 		id: platform.id,
 		type: platform.type,
 		url: platform.url,
-		title: title || platform.id.slice(0, 30),
+		title: '',
 		tabId: activeTabId,
-		addedAt: Date.now()
-	});
-	save(videos);
+		addedAt: Date.now(),
+		order: 0
+	};
+
+	if (isLoggedIn) {
+		try {
+			await apiFetch('/videos', {
+				method: 'POST',
+				body: JSON.stringify({
+					videoId: uid,
+					url: platform.url,
+					type: platform.type,
+					tabId: activeTabId,
+					title: '',
+					addedAt: videoData.addedAt,
+					order: 0
+				})
+			});
+		} catch (e) {
+			showToast('E: failed to save', true);
+			return;
+		}
+	}
+
+	videos.unshift(videoData);
+	if (!isLoggedIn) saveLocal(videos);
 	render();
 	urlEl.value = '';
 	showToast(`-- ${getPlatformLabel(platform.type)} added ✓`);
@@ -138,20 +251,41 @@ function addVideo() {
 
 document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') addVideo(); });
 
-function deleteVideo(uid) {
+async function deleteVideo(uid) {
+	if (isLoggedIn) {
+		try {
+			await apiFetch(`/videos/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+		} catch (e) {
+			showToast('E: failed to delete', true);
+			return;
+		}
+	}
 	videos = videos.filter(v => !(v.uid === uid && v.tabId === activeTabId));
-	save(videos);
+	if (!isLoggedIn) saveLocal(videos);
 	render();
 	showToast('-- deleted');
 }
 
 // ── Tab actions ──
-function addTab() {
+async function addTab() {
 	const name = prompt('tab name:');
 	if (!name || !name.trim()) return;
-	const tab = { id: genId(), name: name.trim() };
+	const tab = { id: genId(), name: name.trim(), createdAt: Date.now() };
+
+	if (isLoggedIn) {
+		try {
+			await apiFetch('/tabs', {
+				method: 'POST',
+				body: JSON.stringify({ tabId: tab.id, name: tab.name, createdAt: tab.createdAt })
+			});
+		} catch (e) {
+			showToast('E: failed to save tab', true);
+			return;
+		}
+	}
+
 	tabs.push(tab);
-	saveTabs(tabs);
+	if (!isLoggedIn) saveTabsLocal(tabs);
 	activeTabId = tab.id;
 	saveActiveTab(activeTabId);
 	renderTabs();
@@ -202,22 +336,32 @@ function renameTabFromMenu() {
 	const name = prompt('new name:', tab.name);
 	if (!name || !name.trim()) return;
 	tab.name = name.trim();
-	saveTabs(tabs);
+	if (!isLoggedIn) saveTabsLocal(tabs);
 	renderTabs();
 	render();
 	showToast(`-- renamed to "${tab.name}"`);
 	closeContextMenu();
 }
 
-function deleteTabFromMenu() {
+async function deleteTabFromMenu() {
 	if (!contextTargetId) return;
 	if (tabs.length === 1) { showToast('E: cannot delete last tab', true); closeContextMenu(); return; }
 	const tab = tabs.find(t => t.id === contextTargetId);
 	if (!confirm(`delete tab "${tab.name}"?\nVideos in this tab will also be deleted.`)) return;
+
+	if (isLoggedIn) {
+		try {
+			await apiFetch(`/tabs/${encodeURIComponent(contextTargetId)}`, { method: 'DELETE' });
+		} catch (e) {
+			showToast('E: failed to delete tab', true);
+			return;
+		}
+	}
+
 	videos = videos.filter(v => v.tabId !== contextTargetId);
-	save(videos);
+	if (!isLoggedIn) saveLocal(videos);
 	tabs = tabs.filter(t => t.id !== contextTargetId);
-	saveTabs(tabs);
+	if (!isLoggedIn) saveTabsLocal(tabs);
 	if (activeTabId === contextTargetId) { activeTabId = tabs[0].id; saveActiveTab(activeTabId); }
 	closeContextMenu();
 	renderTabs();
@@ -265,7 +409,6 @@ function closeDrawer() {
 function render() {
 	const currentVideos = videos.filter(v => v.tabId === activeTabId);
 	const n = currentVideos.length;
-	// count-display removed
 	document.getElementById('sl-count').textContent = `${n}:1`;
 
 	const gallery = document.getElementById('gallery');
@@ -277,7 +420,7 @@ function render() {
 	gallery.innerHTML = currentVideos.map(v => {
 		const thumb = getThumb({ type: v.type, id: v.id });
 		const label = getPlatformLabel(v.type);
-		const labelColor = { youtube: 'var(--red)', vimeo: 'var(--blue)', twitch: 'var(--purple)', twitch_clip: 'var(--purple)', mp4: 'var(--green)' }[v.type] || 'var(--muted)';
+		const labelColor = getPlatformColor(v.type);
 
 		return `
     <div class="card" id="card-${v.uid}" data-uid="${v.uid}" data-type="${v.type}" data-id="${v.id}" data-url="${esc(v.url)}" draggable="true">
@@ -291,7 +434,7 @@ function render() {
       </div>
       <div class="thumb-wrap">
         ${thumb
-				? `<img src="${thumb}" alt="${esc(v.title)}" loading="lazy">`
+				? `<img src="${thumb}" alt="" loading="lazy">`
 				: `<div class="thumb-placeholder"><span>${label}</span></div>`
 			}
         ${v.type === 'mp4'
@@ -306,7 +449,6 @@ function render() {
           </svg>
         </div>
       </div>
-
     </div>`;
 	}).join('');
 
@@ -314,11 +456,8 @@ function render() {
 		const uid = card.dataset.uid;
 		const type = card.dataset.type;
 		const id = card.dataset.id;
-		const url = card.dataset.url;
 		const player = card.querySelector(`#player-${uid}`);
 		const img = card.querySelector('img');
-
-		// 固定再生中かどうか
 		let pinned = false;
 
 		function showPlayer(muted) {
@@ -329,7 +468,6 @@ function render() {
 				player.play().catch(() => { });
 				if (img) img.style.opacity = '0';
 			} else {
-				// すでにsrcがセットされていれば再セットしない（固定再生中のミュート解除を守る）
 				if (!player.src) {
 					const embedSrc = getEmbedUrl({ type, id }, muted);
 					if (embedSrc) player.src = embedSrc;
@@ -342,7 +480,7 @@ function render() {
 		}
 
 		function hidePlayer() {
-			if (pinned) return; // 固定再生中は止めない
+			if (pinned) return;
 			if (type === 'mp4') {
 				player.pause();
 				player.style.opacity = '0';
@@ -359,7 +497,6 @@ function render() {
 		function pinPlayer() {
 			pinned = true;
 			card.classList.add('pinned');
-			// 音ありで再セット（iframeの場合srcを音ありURLで更新）
 			if (type === 'mp4') {
 				player.muted = false;
 			} else {
@@ -388,35 +525,20 @@ function render() {
 			card.querySelector('.play-btn').style.opacity = '1';
 		}
 
-		// PC: ホバーでプレビュー、クリックで固定
-		card.addEventListener('mouseenter', () => {
-			if (!pinned) showPlayer(true);
-		});
-		card.addEventListener('mouseleave', () => {
-			if (!pinned) hidePlayer();
-		});
+		card.addEventListener('mouseenter', () => { if (!pinned) showPlayer(true); });
+		card.addEventListener('mouseleave', () => { if (!pinned) hidePlayer(); });
 		card.addEventListener('click', () => {
 			if (window.innerWidth > 640) {
-				if (pinned) {
-					unpinPlayer();
-				} else {
-					pinPlayer();
-				}
+				if (pinned) unpinPlayer(); else pinPlayer();
 			} else {
-				// スマホ: タップで固定再生トグル
 				if (pinned) {
 					unpinPlayer();
 				} else {
-					// 他の固定再生を解除
-					document.querySelectorAll('.card.pinned').forEach(c => {
-						c._unpinPlayer && c._unpinPlayer();
-					});
+					document.querySelectorAll('.card.pinned').forEach(c => { c._unpinPlayer && c._unpinPlayer(); });
 					pinPlayer();
 				}
 			}
 		});
-
-		// unpinPlayer参照をcard要素に持たせる（他カードから呼べるように）
 		card._unpinPlayer = unpinPlayer;
 	});
 
@@ -453,7 +575,7 @@ function onDrop(e) {
 	const fromIdx = videos.findIndex(v => v.uid === fromUid && v.tabId === activeTabId);
 	const toIdx = videos.findIndex(v => v.uid === toUid && v.tabId === activeTabId);
 	videos.splice(toIdx, 0, videos.splice(fromIdx, 1)[0]);
-	save(videos);
+	if (!isLoggedIn) saveLocal(videos);
 	render();
 	showToast('-- reordered');
 }
@@ -494,7 +616,9 @@ function onTouchEnd(e) {
 		const fromIdx = videos.findIndex(v => v.uid === touchFromUid && v.tabId === activeTabId);
 		const toIdx = videos.findIndex(v => v.uid === toUid && v.tabId === activeTabId);
 		videos.splice(toIdx, 0, videos.splice(fromIdx, 1)[0]);
-		save(videos); render(); showToast('-- reordered');
+		if (!isLoggedIn) saveLocal(videos);
+		render();
+		showToast('-- reordered');
 	}
 	touchClone.remove(); touchClone = null; touchDragEl = null; touchFromUid = null;
 	document.querySelectorAll('.card').forEach(c => c.classList.remove('dragging', 'drag-over'));
@@ -521,9 +645,7 @@ function onScroll() {
 	}, 150);
 }
 
-// ── Auto-hide form ──
-
-
+// ── Toast ──
 function showToast(msg, err = false) {
 	const t = document.getElementById('toast');
 	t.textContent = msg;
@@ -535,7 +657,123 @@ function showToast(msg, err = false) {
 
 function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// ── Init ──
-renderTabs();
-render();
-resetIdleTimer();
+// ── 保留4: ゲストモード→ログイン時のマイグレーション ──
+async function migrateGuestData() {
+	const guestVideos = loadLocal();
+	const guestTabs = loadTabsLocal();
+	if (guestTabs.length === 0 && guestVideos.length === 0) return;
+
+	showToast('-- migrating guest data...');
+
+	// タブをAPIに保存
+	for (const tab of guestTabs) {
+		try {
+			await apiFetch('/tabs', {
+				method: 'POST',
+				body: JSON.stringify({ tabId: tab.id, name: tab.name, createdAt: tab.createdAt || Date.now() })
+			});
+		} catch (e) { console.error('tab migration failed:', e); }
+	}
+
+	// 動画をAPIに保存
+	for (const video of guestVideos) {
+		try {
+			await apiFetch('/videos', {
+				method: 'POST',
+				body: JSON.stringify({
+					videoId: video.uid,
+					url: video.url,
+					type: video.type,
+					tabId: video.tabId,
+					title: video.title || '',
+					addedAt: video.addedAt || Date.now(),
+					order: video.order || 0
+				})
+			});
+		} catch (e) { console.error('video migration failed:', e); }
+	}
+
+	// localStorageをクリア
+	localStorage.removeItem(KEY);
+	localStorage.removeItem(TABS_KEY);
+	showToast('-- migration complete ✓');
+}
+
+// ── 初期化 ──
+async function init() {
+	// コールバック処理（Cognitoからのリダイレクト）
+	const callbackSuccess = await handleCallback();
+
+	// トークンの確認
+	const token = loadToken();
+	if (token && !isTokenExpired(token)) {
+		idToken = token;
+		isLoggedIn = true;
+
+		// ゲストデータのマイグレーション（初回ログイン時）
+		if (callbackSuccess) {
+			await migrateGuestData();
+		}
+
+		// APIからデータ取得
+		try {
+			const [tabsData, videosData] = await Promise.all([
+				apiFetch('/tabs'),
+				apiFetch('/videos')
+			]);
+
+			// APIレスポンスをフロントの形式に変換
+			tabs = tabsData.map(t => ({ id: t.tabId, name: t.name, createdAt: t.createdAt }));
+			videos = videosData.map(v => ({
+				uid: v.videoId,
+				id: v.videoId.split('_').slice(1).join('_'),
+				type: v.type,
+				url: v.url,
+				title: v.title || '',
+				tabId: v.tabId,
+				addedAt: v.addedAt,
+				order: v.order || 0
+			}));
+
+			if (tabs.length === 0) {
+				const defaultTab = { id: genId(), name: 'playlist', createdAt: Date.now() };
+				await apiFetch('/tabs', {
+					method: 'POST',
+					body: JSON.stringify({ tabId: defaultTab.id, name: defaultTab.name, createdAt: defaultTab.createdAt })
+				});
+				tabs.push(defaultTab);
+			}
+
+			activeTabId = loadActiveTab() || tabs[0].id;
+			if (!tabs.find(t => t.id === activeTabId)) activeTabId = tabs[0].id;
+			saveActiveTab(activeTabId);
+
+		} catch (e) {
+			console.error('API fetch failed:', e);
+			showToast('E: failed to load data', true);
+		}
+	} else {
+		// ゲストモード
+		isLoggedIn = false;
+		idToken = null;
+		clearToken();
+
+		if (tabs.length === 0) {
+			const defaultTab = { id: genId(), name: 'playlist' };
+			tabs.push(defaultTab);
+			saveTabsLocal(tabs);
+			activeTabId = defaultTab.id;
+			saveActiveTab(activeTabId);
+		}
+		if (!tabs.find(t => t.id === activeTabId)) {
+			activeTabId = tabs[0].id;
+			saveActiveTab(activeTabId);
+		}
+	}
+
+	updateAuthUI();
+	renderTabs();
+	render();
+}
+
+init();

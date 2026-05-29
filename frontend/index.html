@@ -23,6 +23,12 @@
     <div id="tabList"></div>
     <button class="drawer-add-tab" onclick="addTab()">+ new tab</button>
   </div>
+  <!-- 認証セクション -->
+  <div class="drawer-section">
+    <div class="drawer-section-label">-- auth</div>
+    <div id="authStatus" style="font-size:11px;color:var(--muted);margin-bottom:8px;">-- guest mode</div>
+    <button class="drawer-add-tab" id="authBtn" onclick="handleAuth()">sign in</button>
+  </div>
 </div>
 
 <!-- 長押しコンテキストメニュー -->
