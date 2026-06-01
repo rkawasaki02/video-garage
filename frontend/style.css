@@ -597,3 +597,25 @@ body {
   border-color: var(--green);
   box-shadow: 0 0 0 1px var(--green), 0 8px 32px rgba(158,206,106,0.15);
 }
+
+/* ── Tab edit button ── */
+.tab-edit-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+  font-family: var(--mono);
+  transition: color 0.15s;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tab-edit-btn:hover { color: var(--text); }
+
+.tab-name {
+  cursor: pointer;
+  flex: 1;
+}
