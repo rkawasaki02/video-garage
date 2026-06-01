@@ -185,6 +185,13 @@ let activeTabId = loadActiveTab();
 
 function genId() { return Math.random().toString(36).slice(2, 10); }
 
+// URLからプラットフォーム固有のIDを再取得
+function extractIdFromUrl(url, type) {
+	const platform = detectPlatform(url);
+	if (platform) return platform.id;
+	return url;
+}
+
 // タブが1つもなければデフォルト作成
 if (tabs.length === 0) {
 	const defaultTab = { id: genId(), name: 'playlist' };
@@ -208,8 +215,13 @@ async function addVideo() {
 	const platform = detectPlatform(url);
 	if (!platform) { showToast('E: unsupported URL', true); return; }
 
-	const uid = platform.type + '_' + platform.id;
-	if (videos.find(v => v.uid === uid && v.tabId === activeTabId)) { showToast('W: already exists', true); return; }
+	// 同じタブ内に同じURLが既にあるか確認（uidではなくid+tabIdで重複チェック）
+	if (videos.find(v => v.id === platform.id && v.type === platform.type && v.tabId === activeTabId)) {
+		showToast('W: already exists', true); return;
+	}
+
+	// uidはユニークにするためにgenId()を付加
+	const uid = platform.type + '_' + platform.id + '_' + genId();
 
 	const videoData = {
 		uid,
@@ -302,21 +314,12 @@ function switchTab(id) {
 
 // ── Context menu ──
 let contextTargetId = null;
-let longPressTimer = null;
 
-function setupTabLongPress(el, tabId) {
-	el.addEventListener('mousedown', () => { longPressTimer = setTimeout(() => openContextMenu(tabId, el), 600); });
-	el.addEventListener('mouseup', () => clearTimeout(longPressTimer));
-	el.addEventListener('mouseleave', () => clearTimeout(longPressTimer));
-	el.addEventListener('touchstart', () => { longPressTimer = setTimeout(() => openContextMenu(tabId, el), 600); }, { passive: true });
-	el.addEventListener('touchend', () => clearTimeout(longPressTimer));
-	el.addEventListener('touchmove', () => clearTimeout(longPressTimer), { passive: true });
-}
 
-function openContextMenu(tabId, el) {
+function openTabMenu(tabId, btn) {
 	contextTargetId = tabId;
 	const menu = document.getElementById('contextMenu');
-	const rect = el.getBoundingClientRect();
+	const rect = btn.getBoundingClientRect();
 	menu.style.top = `${rect.bottom + 4}px`;
 	menu.style.left = `${rect.left}px`;
 	menu.classList.add('open');
@@ -381,17 +384,11 @@ function renderTabs() {
 		const count = videos.filter(v => v.tabId === t.id).length;
 		return `<div class="drawer-tab-item${isActive ? ' active' : ''}" data-tab-id="${t.id}" id="drawer-tab-${t.id}">
       <span class="tab-icon">${isActive ? '▸' : '○'}</span>
-      <span>${esc(t.name)}</span>
+      <span class="tab-name" onclick="switchTab('${t.id}'); closeDrawer();">${esc(t.name)}</span>
       <span class="tab-count">${count}</span>
+      <button class="tab-edit-btn" onclick="event.stopPropagation(); openTabMenu('${t.id}', this)">⋯</button>
     </div>`;
 	}).join('');
-
-	tabs.forEach(t => {
-		const drawerEl = document.getElementById(`drawer-tab-${t.id}`);
-		if (!drawerEl) return;
-		drawerEl.addEventListener('click', () => { switchTab(t.id); closeDrawer(); });
-		setupTabLongPress(drawerEl, t.id);
-	});
 }
 
 // ── Drawer ──
@@ -710,8 +707,8 @@ async function init() {
 		idToken = token;
 		isLoggedIn = true;
 
-		// ゲストデータのマイグレーション（初回ログイン時）
-		if (callbackSuccess) {
+		// ゲストデータのマイグレーション（初回ログイン時のみ）
+		if (callbackSuccess && (loadLocal().length > 0 || loadTabsLocal().length > 0)) {
 			await migrateGuestData();
 		}
 
@@ -726,7 +723,7 @@ async function init() {
 			tabs = tabsData.map(t => ({ id: t.tabId, name: t.name, createdAt: t.createdAt }));
 			videos = videosData.map(v => ({
 				uid: v.videoId,
-				id: v.videoId.split('_').slice(1).join('_'),
+				id: extractIdFromUrl(v.url, v.type),
 				type: v.type,
 				url: v.url,
 				title: v.title || '',
