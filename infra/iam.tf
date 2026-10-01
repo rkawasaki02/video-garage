@@ -131,8 +131,6 @@ resource "aws_iam_policy" "delete_videos_policy" {
     ]
   })
 }
-
-
 resource "aws_iam_policy" "delete_tabs_policy" {
   name = "videogarage-db-delete-tabs-policy"
   path = "/"
@@ -148,8 +146,12 @@ resource "aws_iam_policy" "delete_tabs_policy" {
         ]
         Resource = [
           aws_dynamodb_table.videogarage_videos.arn,
-          aws_dynamodb_table.videogarage_tabs.arn,
         ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:DeleteItem"]
+        Resource = [aws_dynamodb_table.videogarage_tabs.arn]
       },
     ]
   })
