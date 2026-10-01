@@ -308,7 +308,8 @@ async function addVideo() {
 
 	if (isLoggedIn) {
 		try {
-			await upsertVideoRemote(videoData);
+			const res = await upsertVideoRemote(videoData);
+			videoData.thumbnailUrl = res?.thumbnailUrl || '';
 		} catch {
 			showToast("Couldn't save the video", true);
 			return;
@@ -516,7 +517,7 @@ function cardText(v) {
 	const date = formatDate(v.addedAt);
 	if (v.title) return { title: v.title, sub: date };
 	if (v.type === 'mp4') return { title: fileNameFromUrl(v.url), sub: date };
-	if (v.type === 'twitch' || v.type === 'twitch_clip') return { title: v.id, sub: date };
+	if (v.type === 'twitch' || v.type === 'twitch_clip' || v.type === 'twitch_vod') return { title: v.id, sub: date };
 	return { title: date ? `Added ${date}` : 'Saved video', sub: '' };
 }
 
@@ -545,7 +546,7 @@ function render() {
 	}
 
 	gallery.innerHTML = currentVideos.map(v => {
-		const thumb = getThumb({ type: v.type, id: v.id });
+		const thumb = getThumb({ type: v.type, id: v.id, thumbnailUrl: v.thumbnailUrl });
 		const label = getPlatformLabel(v.type);
 		const labelColor = getPlatformColor(v.type);
 		const text = cardText(v);
@@ -956,7 +957,8 @@ async function init() {
 				title: v.title || '',
 				tabId: v.tabId,
 				addedAt: v.addedAt,
-				order: v.order ?? 0
+				order: v.order ?? 0,
+				thumbnailUrl: v.thumbnailUrl || ''
 			}));
 
 			// 修正: サーバ返却順（DynamoDBのスキャン順）に依存せず、

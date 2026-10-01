@@ -1,4 +1,8 @@
 locals {
+  # Twitch の認証情報は Terraform の state に載せないよう、SSM に手動で登録したものを参照する
+  twitch_client_id_param     = "/videogarage/twitch/client-id"
+  twitch_client_secret_param = "/videogarage/twitch/client-secret"
+
   lambda_functions = {
     tab_get_func = {
       name         = "videogarage-tabs-get"
@@ -34,9 +38,15 @@ locals {
     video_post_func = {
       name         = "videogarage-videos-post"
       source       = "videos/post.py"
-      role         = aws_iam_role.write_role.arn
+      role         = aws_iam_role.videos_post_role.arn
       handler_file = "post"
-      env          = { TABLE_NAME_VIDEOS = aws_dynamodb_table.videogarage_videos.name }
+      # Twitch API への問い合わせ（SSM → トークン → Helix）を含むため既定の3秒から延長
+      timeout = 10
+      env = {
+        TABLE_NAME_VIDEOS          = aws_dynamodb_table.videogarage_videos.name
+        TWITCH_CLIENT_ID_PARAM     = local.twitch_client_id_param
+        TWITCH_CLIENT_SECRET_PARAM = local.twitch_client_secret_param
+      }
     }
     video_delete_func = {
       name         = "videogarage-videos-delete"
@@ -65,6 +75,7 @@ resource "aws_lambda_function" "this" {
   role             = each.value.role
   runtime          = "python3.14"
   handler          = "${each.value.handler_file}.lambda_handler"
+  timeout          = try(each.value.timeout, 3)
 
   environment {
     variables = each.value.env
