@@ -42,6 +42,8 @@ locals {
       handler_file = "post"
       # Twitch API への問い合わせ（SSM → トークン → Helix）を含むため既定の3秒から延長
       timeout = 10
+      # 実測で最大101MB使用しており、既定の128MBでは余裕が無いため増やす
+      memory_size = 256
       env = {
         TABLE_NAME_VIDEOS          = aws_dynamodb_table.videogarage_videos.name
         TWITCH_CLIENT_ID_PARAM     = local.twitch_client_id_param
@@ -76,6 +78,7 @@ resource "aws_lambda_function" "this" {
   runtime          = "python3.14"
   handler          = "${each.value.handler_file}.lambda_handler"
   timeout          = try(each.value.timeout, 3)
+  memory_size      = try(each.value.memory_size, 128)
 
   environment {
     variables = each.value.env
