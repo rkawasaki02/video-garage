@@ -17,6 +17,10 @@ export function detectPlatform(url) {
 	const twitchClip = url.match(/twitch\.tv\/\w+\/clip\/([A-Za-z0-9_-]+)/);
 	if (twitchClip) return { type: 'twitch_clip', id: twitchClip[1], url };
 
+	// Twitch VOD（channel 判定より先に評価すること）
+	const twitchVod = url.match(/twitch\.tv\/videos\/(\d+)/);
+	if (twitchVod) return { type: 'twitch_vod', id: twitchVod[1], url };
+
 	// Twitch channel
 	const twitch = url.match(/twitch\.tv\/([A-Za-z0-9_]+)/);
 	if (twitch) return { type: 'twitch', id: twitch[1], url };
@@ -33,6 +37,11 @@ export function getThumb(platform) {
 	switch (platform.type) {
 		case 'youtube': return `https://img.youtube.com/vi/${platform.id}/hqdefault.jpg`;
 		case 'vimeo': return `https://vumbnail.com/${platform.id}.jpg`;
+		// Twitch はサムネ取得に認証が要るため、動画保存 Lambda が取得した URL を使う
+		case 'twitch':
+		case 'twitch_clip':
+		case 'twitch_vod':
+			return platform.thumbnailUrl || '';
 		default: return '';
 	}
 }
@@ -45,6 +54,8 @@ export function getEmbedUrl(platform, muted = true) {
 			return `https://player.vimeo.com/video/${platform.id}?autoplay=1&muted=${muted ? 1 : 0}`;
 		case 'twitch':
 			return `https://player.twitch.tv/?channel=${platform.id}&autoplay=true&muted=${muted}&parent=${location.hostname}`;
+		case 'twitch_vod':
+			return `https://player.twitch.tv/?video=${platform.id}&autoplay=true&muted=${muted}&parent=${location.hostname}`;
 		case 'twitch_clip':
 			return `https://clips.twitch.tv/embed?clip=${platform.id}&autoplay=true&muted=${muted}&parent=${location.hostname}`;
 		default:
@@ -58,6 +69,7 @@ export function getPlatformLabel(type) {
 		vimeo: 'Vimeo',
 		twitch: 'Twitch',
 		twitch_clip: 'Twitch clip',
+		twitch_vod: 'Twitch VOD',
 		mp4: 'Video'
 	};
 	return map[type] || type;
@@ -69,6 +81,7 @@ export function getPlatformColor(type) {
 		vimeo: 'var(--blue)',
 		twitch: 'var(--purple)',
 		twitch_clip: 'var(--purple)',
+		twitch_vod: 'var(--purple)',
 		mp4: 'var(--green)'
 	};
 	return map[type] || 'var(--muted)';
