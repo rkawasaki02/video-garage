@@ -39,7 +39,7 @@ resource "aws_iam_policy" "tfstate_access" {
   policy = data.aws_iam_policy_document.tfstate_access.json
 }
 
-# ── plan 用ロール(PRから引き受け) ──
+# ── plan 用ロール(PR と main のデプロイ前 plan から引き受け) ──
 
 data "aws_iam_policy_document" "plan_assume" {
   statement {
@@ -58,7 +58,11 @@ data "aws_iam_policy_document" "plan_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repo}:pull_request"]
+      values = [
+        "repo:${local.github_repo}:pull_request",
+        # deploy.yml の承認前 plan ジョブ(environment なし)用
+        "repo:${local.github_repo}:ref:refs/heads/main",
+      ]
     }
   }
 }
