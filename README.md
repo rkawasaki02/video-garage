@@ -12,7 +12,7 @@
 ![Terraform](https://img.shields.io/badge/Terraform-844FBA?style=flat&logo=terraform&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=flat&logo=githubactions&logoColor=white)
 
-![VideoGarage デモ](./docs/app-demo.gif)
+![VideoGarage](./docs/app-playlist.png)
 
 ---
 
@@ -65,7 +65,7 @@
 | データ移行 | ゲスト時のデータをログイン時に自動でクラウドへ移行 |
 | セッション自動更新 | リフレッシュトークンによるサイレント更新で、操作中にログインが途切れない |
 
-![プレイリスト管理画面](./docs/app-playlist.png)
+![VideoGarage デモ](./docs/app-demo.gif)
 
 **使い方**: https://videogarage.jp を開き、動画のURL（例: `https://www.youtube.com/watch?v=...`）を貼って「+ Add video」を押すだけです。アカウント登録なしでもすべての機能が使え、サインインすると保存済みのデータがそのままクラウドに引き継がれます。
 
