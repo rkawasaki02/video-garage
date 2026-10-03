@@ -12,8 +12,7 @@
 ![Terraform](https://img.shields.io/badge/Terraform-844FBA?style=flat&logo=terraform&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=flat&logo=githubactions&logoColor=white)
 
-<!-- TODO: スクリーンショット（トップ画面）とデモGIF（ホバー再生→ピン留め→並び替え）を撮影して差し替え -->
-![VideoGarage スクリーンショット](./docs/screenshot.png)
+![VideoGarage デモ](./docs/app-demo.gif)
 
 ---
 
@@ -66,13 +65,15 @@
 | データ移行 | ゲスト時のデータをログイン時に自動でクラウドへ移行 |
 | セッション自動更新 | リフレッシュトークンによるサイレント更新で、操作中にログインが途切れない |
 
+![プレイリスト管理画面](./docs/app-playlist.png)
+
 **使い方**: https://videogarage.jp を開き、動画のURL（例: `https://www.youtube.com/watch?v=...`）を貼って「+ Add video」を押すだけです。アカウント登録なしでもすべての機能が使え、サインインすると保存済みのデータがそのままクラウドに引き継がれます。
 
 ---
 
 ## アーキテクチャ
 
-![アーキテクチャ図](./docs/architecture.png)
+![アーキテクチャ図](./docs/VideoGarage.png)
 
 リクエストの流れは3系統に分かれます。
 
@@ -104,18 +105,20 @@
 
 GitHub Actions で Terraform の実行を自動化しています。認証は **OIDC**（GitHubの短命トークンをAWSの一時クレデンシャルに交換）で、アクセスキーは一切保存していません。
 
-<!-- TODO: deploy.yml に CloudFront キャッシュ無効化ステップが実装済みか未確認のため、図から一旦外している。
-     実装済みであれば `APPLY --> INV[CloudFront キャッシュ無効化]` を復活させる。未実装なら「今後の予定」に残す。 -->
-
 ```mermaid
 flowchart LR
-    PR[Pull Request] --> CHK["fmt / validate / plan<br>（必須ステータスチェック）"]
+    PR[Pull Request] --> CHK["validate / plan<br>（必須ステータスチェック）"]
     CHK --> MG[Squash merge → main]
-    MG --> AP["environment: production<br>手動承認"]
+    MG --> PLAN["terraform plan<br>（結果をジョブサマリーに表示）"]
+    PLAN --> AP["environment: production<br>手動承認"]
     AP --> APPLY[terraform apply]
+    APPLY --> INV[CloudFront キャッシュ無効化]
 ```
 
-- **ロール分離**: plan用（読み取り専用）と apply用（承認済み環境のジョブのみ引き受け可能）の2ロール構成。信頼ポリシーの `sub` クレーム条件で、PRイベントからは読み取りロールしか使えないことをAWS側で強制
+![Deployワークフロー（plan → 承認 → apply）](./docs/cicd-deploy.gif)
+
+- **承認前の差分確認**: mainマージ後のDeployは plan ジョブと apply ジョブに分かれており、承認者はジョブサマリーの plan 結果を見てから承認する
+- **ロール分離**: plan用（読み取り専用）と apply用（承認済み production 環境のジョブのみ引き受け可能）の2ロール構成。信頼ポリシーの `sub` クレーム条件で、PRイベントと main の plan ジョブからは読み取りロールしか使えないことをAWS側で強制
 - **plan差分ゼロの維持**: applyしていないのに差分が出る＝ドリフトの検知器として機能させる運用
 
 ---
